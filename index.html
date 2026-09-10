@@ -24,6 +24,11 @@
   .sc { float:right; color:var(--accent); font-weight:700; }
   .m { font-size:.82rem; color:#555; margin:.2rem 0 0 .2rem; }
   .mj { color:#aaa; }
+  .badge { display:inline-block; font-size:.7rem; font-weight:600; line-height:1;
+           padding:.18rem .4rem; border-radius:10px; border:1px solid;
+           vertical-align:middle; white-space:nowrap; }
+  .badges { margin:.35rem 0 .1rem .1rem; display:flex; flex-wrap:wrap; gap:.3rem; }
+  .yr { color:#bbb; font-size:.75rem; margin-left:.3rem; }
   .bar { display:inline-block; height:.5rem; background:var(--accent); border-radius:3px;
          vertical-align:middle; margin-right:.4rem; }
   a { color:var(--accent); }
@@ -100,18 +105,45 @@ function search(qvec, exclude) {
     .map(c => (c.matches.sort((x, y) => y.sim - x.sim), c));
 }
 
+// Journal badges — a stable color per journal (hue hashed from the name) plus
+// short labels, so cards are quick to scan once the corpus spans many journals.
+const JABBR = {
+  "Contemporary Sociology": "Contemp Soc", "Social Forces": "Soc Forces",
+  "American Journal of Sociology": "AJS", "American Sociological Review": "ASR",
+  "Social Problems": "Soc Problems", "Gender & Society": "Gender & Soc",
+  "Sociology of Race and Ethnicity": "Race & Ethnicity",
+  "Ethnic and Racial Studies": "Ethnic & Racial",
+  "International Migration Review": "Int Migration Rev",
+  "Journal for the Scientific Study of Religion": "JSSR",
+  "Law & Society Review": "Law & Society", "Social Movement Studies": "Soc Movement",
+  "Mobilization": "Mobilization", "Sociological Forum": "Soc Forum",
+};
+function jhue(j) { let h = 0; for (let i = 0; i < j.length; i++) h = (h * 31 + j.charCodeAt(i)) % 360; return h; }
+function badge(j, title) {
+  const h = jhue(j);
+  return `<span class="badge" title="${title || j}"` +
+    ` style="background:hsl(${h} 60% 93%);border-color:hsl(${h} 45% 62%);color:hsl(${h} 55% 32%)">` +
+    `${JABBR[j] || j}</span>`;
+}
+
 function render(cands) {
   if (!cands.length) { $('results').innerHTML = '<p>No candidates.</p>'; return; }
   $('results').innerHTML =
     `<h2 style="font-size:1.1rem;margin-top:2rem">Top ${cands.length} candidate reviewers</h2>` +
     cands.map(c => {
       const oa = c.oaid ? ` · <a href="https://openalex.org/${c.oaid}" target="_blank">OpenAlex</a>` : '';
+      // distinct journals this reviewer reviewed for (among matches), most-reviewed first
+      const jc = {};
+      for (const m of c.matches) jc[m.j] = (jc[m.j] || 0) + 1;
+      const journals = Object.keys(jc).sort((a, b) => jc[b] - jc[a]);
+      const badges = `<div class="badges">` +
+        journals.map(j => badge(j, `${j} — ${jc[j]} review(s)`)).join('') + `</div>`;
       const ms = c.matches.slice(0, 5).map(m =>
         `<div class="m"><span class="bar" style="width:${Math.round(m.sim*70)}px"></span>` +
-        `${m.sim.toFixed(2)}&nbsp; ${m.t} <span class="mj">· ${m.j} ${m.y||''}</span></div>`).join('');
+        `${m.sim.toFixed(2)}&nbsp; ${m.t} ${badge(m.j)}<span class="yr">${m.y||''}</span></div>`).join('');
       return `<div class="cand"><span class="sc">${c.score.toFixed(2)}</span>` +
              `<h3>${c.name}</h3><div class="inst">${c.inst||'—'}${oa} · ` +
-             `${c.matches.length} similar book(s) reviewed</div>${ms}</div>`;
+             `${c.matches.length} similar book(s) reviewed</div>${badges}${ms}</div>`;
     }).join('');
 }
 
