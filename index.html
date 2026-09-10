@@ -52,9 +52,9 @@
 <label>Match on</label>
 <div class="modes">
   <label><input type="radio" name="mode" value="title" checked> Title + keywords
-    <span class="hint">— all books; best with a short title-length query</span></label>
+    <span class="hint" id="hint-title">— all books; best with a short title-length query</span></label>
   <label><input type="radio" name="mode" value="full"> Full text
-    <span class="hint">— only books with a description/abstract; best with a longer query</span></label>
+    <span class="hint" id="hint-full">— only books with a description/abstract; best with a longer query</span></label>
 </div>
 
 <button id="go" disabled>Loading model…</button>
@@ -90,6 +90,9 @@ const nRev = new Set(BOOKS.flatMap(b => b.r.map(r => r[0]))).size;
 $('corpusline').textContent =
   `${BOOKS.length} books · ${nFull} with descriptions · ${nRev} reviewers · ` +
   `sociology journals · public data · runs entirely in your browser`;
+const fmt = n => n.toLocaleString();
+$('hint-title').textContent = `— all ${fmt(BOOKS.length)} books; best with a short title-length query`;
+$('hint-full').textContent = `— ${fmt(nFull)} books with a description/abstract; best with a longer query`;
 
 // Load the model lazily via dynamic import (so a corpus that's already decoded
 // still renders even if the model host is slow) and force SINGLE-THREADED wasm:
