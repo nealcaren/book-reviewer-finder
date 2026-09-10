@@ -4,3 +4,7 @@
 __pycache__/
 .env
 .DS_Store
+
+# ...except the two caches we commit so updates are incremental (no re-download)
+!reviews.parquet
+!google_books.parquet

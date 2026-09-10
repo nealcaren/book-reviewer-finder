@@ -1,0 +1,56 @@
+name: Daily data refresh
+
+# Rebuilds data.js from public sources and pushes it, so the GitHub Pages site
+# updates itself. Incremental: the committed reviews.parquet / google_books.parquet
+# caches mean only new work is fetched (and Google Books stays under its quota).
+on:
+  schedule:
+    - cron: "17 8 * * *"      # ~08:17 UTC daily (GitHub may delay under load)
+  workflow_dispatch: {}        # allow manual runs from the Actions tab
+
+permissions:
+  contents: write              # to commit the refreshed data back
+
+concurrency:
+  group: data-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Write .env from secrets
+        run: |
+          {
+            echo "GOOGLE_BOOKS_API_KEY=${{ secrets.GOOGLE_BOOKS_API_KEY }}"
+            echo "OPENALEX_API_KEY=${{ secrets.OPENALEX_API_KEY }}"
+          } > .env
+
+      - name: Collect reviews (OpenAlex)
+        run: uv run pipeline/collect_reviews.py --since 2020-01-01
+
+      - name: Enrich descriptions (Google Books; quota-capped, resumable)
+        run: uv run pipeline/enrich_google_books.py --max 900
+
+      - name: Rebuild data.js
+        run: uv run pipeline/embed_local.py
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data.js reviews.parquet google_books.parquet
+          if git diff --cached --quiet; then
+            echo "No changes to publish."
+          else
+            git commit -m "Daily data refresh [skip ci]"
+            git push
+          fi
