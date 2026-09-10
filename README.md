@@ -71,13 +71,25 @@ GitHub Pages rebuilds automatically after the push (~1–2 min).
 - **Adding new books only** is cheap — steps 1–3 are incremental/cached; only
   Google Books is quota-limited.
 
+### Two search modes
+Each book carries **two** `all-MiniLM-L6-v2` vectors so search stays
+length-consistent (a single encoder makes similarity favor query/document of
+comparable length, which would otherwise let query length bias which *kind* of
+book surfaces):
+
+- **Title + keywords** (`et`, every book) — title plus the review's OpenAlex
+  topics/keywords. Short and uniform; ranks all books. Best for a short query.
+- **Full text** (`ef`, only books with a description/abstract) — title +
+  keywords + Google Books description + review abstract. Ranks just the enriched
+  subset, all comparable length. Best for a longer query.
+
 ### How `data.js` is packed
-Book vectors are 384-d `all-MiniLM-L6-v2` embeddings, **int8-quantized** with a
-single global scale (`EMB_SCALE`) and base64-packed — ~7× smaller than raw
-floats, with ranking unchanged (the constant scale drops out of the sort; the
-browser multiplies by `EMB_SCALE` only to show a 0–1 similarity). The query is
-embedded live in-browser with the same model, so query and corpus vectors are
-comparable.
+Each book's `et`/`ef` is a 384-d embedding, **int8-quantized** with a single
+global scale per set (`EMB_SCALE_TITLE` / `EMB_SCALE_FULL`) and base64-packed —
+~7× smaller than raw-float JSON, with ranking unchanged (the constant scale
+drops out of the sort; the browser multiplies by it only to show a 0–1
+similarity). `ef` is `null` for books without prose. The query is embedded live
+in-browser with the same model, so query and corpus vectors are comparable.
 
 ## License
 
