@@ -85,7 +85,8 @@ def main() -> int:
     gb_path = ROOT / "google_books.parquet"
     if gb_path.exists():
         gb = pd.read_parquet(gb_path)
-        cols = [c for c in ("work_id", "gb_description", "gb_categories") if c in gb.columns]
+        cols = [c for c in ("work_id", "gb_description", "gb_categories", "gb_authors")
+                if c in gb.columns]
         df = df.merge(gb[cols], on="work_id", how="left")
 
     # collapse to books, keeping the reviewer list per book
@@ -131,8 +132,13 @@ def main() -> int:
     for i, b in enumerate(books):
         r = b["row"]
         ef = ef_by_i.get(i)
+        # Prefer the Google Books author (broad coverage, all journals); fall back
+        # to the author parsed from the citation-style review title.
+        author = r.get("gb_authors") or r.get("book_author")
+        author = author if isinstance(author, str) and author.strip() else None
         out.append({
             "t": str(r["book_title"]),
+            "a": author,
             "y": int(r["year"]) if pd.notna(r["year"]) else None,
             "j": str(r["journal"]),
             "r": b["reviewers"],

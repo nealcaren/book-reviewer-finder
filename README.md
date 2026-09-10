@@ -91,6 +91,29 @@ drops out of the sort; the browser multiplies by it only to show a 0–1
 similarity). `ef` is `null` for books without prose. The query is embedded live
 in-browser with the same model, so query and corpus vectors are comparable.
 
+## Future work
+
+### Blend book authors into the candidate pool
+The author of a topically-similar book is themselves a plausible reviewer — a
+demonstrated expert in the area. We already capture the reviewed book's author
+(`gb_authors` from Google Books, with the citation-parsed `book_author` as a
+fallback), so the next step is to surface **authors as candidates alongside the
+reviewers** of similar books.
+
+The deliberate simplification: **don't try to match/disambiguate authors** to
+OpenAlex ids. Resolving a name like "J. Smith" to a specific OpenAlex author is
+fuzzy and error-prone, and it isn't worth the risk here. Instead an author is
+simply associated with the book(s) they wrote and shows up in the results tied
+to those works — no institution, no OpenAlex link, no dedup against reviewer
+identities.
+
+To keep the distinction obvious in the UI, render author-derived candidates
+with a **different treatment** (e.g. a light background tint) so they read as
+"authored a similar book" rather than "reviewed a similar book." Editors can
+then weigh them accordingly. Because authors aren't matched, an author who is
+*also* a reviewer will legitimately appear twice — once per role — which is
+acceptable given the visual distinction.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

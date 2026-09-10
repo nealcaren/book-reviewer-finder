@@ -17,7 +17,9 @@ corpus spans a few days — but this script is CACHED + RESUMABLE and stops
 cleanly when it hits the daily quota, so just re-run it each day (or request a
 quota bump) until it's done.
 
-Output: google_books.parquet (work_id, gb_title, gb_description, gb_categories).
+Output: google_books.parquet (work_id, gb_title, gb_description, gb_categories,
+gb_authors, gb_publisher, gb_published). All come from the SAME volume response,
+so keeping author/publisher costs no extra quota.
 
     uv run book_reviewer_finder/enrich_google_books.py
     uv run book_reviewer_finder/enrich_google_books.py --max 900   # cap per run
@@ -71,7 +73,10 @@ def query(title: str, author: str | None) -> dict:
                 return {}
             return {"gb_title": gt or None,
                     "gb_description": it.get("description") or None,
-                    "gb_categories": "; ".join(it.get("categories") or []) or None}
+                    "gb_categories": "; ".join(it.get("categories") or []) or None,
+                    "gb_authors": "; ".join(it.get("authors") or []) or None,
+                    "gb_publisher": it.get("publisher") or None,
+                    "gb_published": it.get("publishedDate") or None}
         except httpx.HTTPError:
             if attempt == 2:
                 return {}

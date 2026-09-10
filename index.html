@@ -29,6 +29,7 @@
            vertical-align:middle; white-space:nowrap; }
   .badges { margin:.35rem 0 .1rem .1rem; display:flex; flex-wrap:wrap; gap:.3rem; }
   .yr { color:#bbb; font-size:.75rem; margin-left:.3rem; }
+  .auth { color:#888; font-style:italic; }
   .more { width:100%; margin-top:1rem; background:#fff; color:var(--accent);
           border:1px solid var(--accent); font-weight:600; }
   .more:hover { background:#f2f7fc; }
@@ -150,7 +151,7 @@ function search(qvec, exclude, mode) {
       if (!c) { c = { name, inst, oaid, score: 0, best: 0, matches: [] }; cand.set(key, c); }
       c.score += sim; c.best = Math.max(c.best, sim);
       if (!c.inst && inst) c.inst = inst;
-      c.matches.push({ t: b.t, sim, j: b.j, y: b.y });
+      c.matches.push({ t: b.t, a: b.a, sim, j: b.j, y: b.y });
     }
   }
   return [...cand.values()]
@@ -184,7 +185,7 @@ function cardHTML(c) {
   // Journal is shown on each cited book below (the summary row was redundant).
   const ms = c.matches.slice(0, 5).map(m =>
     `<div class="m"><span class="bar" style="width:${Math.round(m.sim*70)}px"></span>` +
-    `${m.sim.toFixed(2)}&nbsp; ${m.t} ${badge(m.j)}<span class="yr">${m.y||''}</span></div>`).join('');
+    `${m.sim.toFixed(2)}&nbsp; ${m.t}${m.a ? ` <span class="auth">by ${m.a}</span>` : ''} ${badge(m.j)}<span class="yr">${m.y||''}</span></div>`).join('');
   return `<div class="cand"><span class="sc">${c.score.toFixed(2)}</span>` +
          `<h3>${c.name}</h3><div class="inst">${c.inst||'—'}${oa} · ` +
          `${c.matches.length} similar book(s) reviewed</div>${ms}</div>`;
