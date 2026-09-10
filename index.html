@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Book-Review Reviewer Finder</title>
+<style>
+  :root { --accent:#2b6cb0; }
+  body { font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif; max-width:960px;
+         margin:2rem auto; padding:0 1rem; color:#1a1a1a; }
+  h1 { font-size:1.4rem; margin-bottom:.2rem; }
+  .sub { color:#666; margin-bottom:1.3rem; font-size:.9rem; }
+  label { font-weight:600; font-size:.82rem; color:#444; display:block; margin:.8rem 0 .2rem; }
+  textarea, input { width:100%; padding:.5rem; font:inherit; border:1px solid #ccc;
+                    border-radius:6px; box-sizing:border-box; }
+  button { margin-top:1rem; padding:.55rem 1.4rem; font:inherit; background:var(--accent);
+           color:#fff; border:0; border-radius:6px; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:progress; }
+  #status { color:#888; font-size:.85rem; margin:1rem 0; }
+  .cand { border:1px solid #e4e4e4; border-radius:8px; padding:.7rem 1rem; margin:.6rem 0; }
+  .cand h3 { margin:0; font-size:1.05rem; }
+  .inst { color:#666; font-size:.85rem; }
+  .sc { float:right; color:var(--accent); font-weight:700; }
+  .m { font-size:.82rem; color:#555; margin:.2rem 0 0 .2rem; }
+  .mj { color:#aaa; }
+  .bar { display:inline-block; height:.5rem; background:var(--accent); border-radius:3px;
+         vertical-align:middle; margin-right:.4rem; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<h1>Find a book-review reviewer</h1>
+<div class="sub" id="corpusline">Loading corpus…</div>
+
+<label>New book — title (a subtitle or blurb sharpens the match)</label>
+<textarea id="q" rows="3" placeholder="e.g. The Sum of Us: How Racism Costs Everyone and How We Can Prosper Together"></textarea>
+<label>Exclude names (COI — the book's author / known conflicts, comma-separated)</label>
+<input id="excl" placeholder="Jane Smith, John Doe">
+<button id="go" disabled>Loading model…</button>
+
+<div id="status"></div>
+<div id="results"></div>
+
+<footer style="margin-top:3rem;padding-top:1rem;border-top:1px solid #eee;color:#999;font-size:.8rem">
+  Suggests candidate reviewers for a new book by finding sociologists who reviewed
+  semantically similar books. Data from public OpenAlex records + Google Books
+  descriptions; embeddings and search run entirely in your browser. A discovery
+  aid, not an endorsement — always apply your own editorial and COI judgment.
+</footer>
+
+<script src="data.js"></script>
+<script type="module">
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
+env.allowLocalModels = false;   // pull the model from the HF hub CDN
+
+const $ = id => document.getElementById(id);
+const nRev = new Set(BOOKS.flatMap(b => b.r.map(r => r[0]))).size;
+$('corpusline').textContent =
+  `${BOOKS.length} reviewed books · ${nRev} reviewers · sociology journals · public data · runs entirely in your browser`;
+
+let extractor = null;
+(async () => {
+  $('status').textContent = 'Downloading the embedding model (first load only, ~25 MB)…';
+  extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+  $('status').textContent = '';
+  $('go').disabled = false;
+  $('go').textContent = 'Find reviewers';
+})();
+
+async function embed(text) {
+  const out = await extractor(text, { pooling: 'mean', normalize: true });
+  return out.data;                       // Float32Array, length 384, normalized
+}
+
+function search(qvec, exclude) {
+  // cosine == dot (all vectors normalized)
+  const sims = BOOKS.map(b => {
+    let s = 0; const e = b.e;
+    for (let i = 0; i < e.length; i++) s += e[i] * qvec[i];
+    return s;
+  });
+  const idx = sims.map((s, i) => [s, i]).sort((a, b) => b[0] - a[0]).slice(0, 60);
+  const cand = new Map();
+  for (const [sim, i] of idx) {
+    const b = BOOKS[i];
+    for (const [name, inst, oaid] of b.r) {
+      if (!name || exclude.has(name.trim().toLowerCase())) continue;
+      const key = oaid || name;
+      let c = cand.get(key);
+      if (!c) { c = { name, inst, oaid, score: 0, best: 0, matches: [] }; cand.set(key, c); }
+      c.score += sim; c.best = Math.max(c.best, sim);
+      if (!c.inst && inst) c.inst = inst;
+      c.matches.push({ t: b.t, sim, j: b.j, y: b.y });
+    }
+  }
+  return [...cand.values()]
+    .sort((a, b) => b.score - a.score || b.best - a.best)
+    .slice(0, 25)
+    .map(c => (c.matches.sort((x, y) => y.sim - x.sim), c));
+}
+
+function render(cands) {
+  if (!cands.length) { $('results').innerHTML = '<p>No candidates.</p>'; return; }
+  $('results').innerHTML =
+    `<h2 style="font-size:1.1rem;margin-top:2rem">Top ${cands.length} candidate reviewers</h2>` +
+    cands.map(c => {
+      const oa = c.oaid ? ` · <a href="https://openalex.org/${c.oaid}" target="_blank">OpenAlex</a>` : '';
+      const ms = c.matches.slice(0, 5).map(m =>
+        `<div class="m"><span class="bar" style="width:${Math.round(m.sim*70)}px"></span>` +
+        `${m.sim.toFixed(2)}&nbsp; ${m.t} <span class="mj">· ${m.j} ${m.y||''}</span></div>`).join('');
+      return `<div class="cand"><span class="sc">${c.score.toFixed(2)}</span>` +
+             `<h3>${c.name}</h3><div class="inst">${c.inst||'—'}${oa} · ` +
+             `${c.matches.length} similar book(s) reviewed</div>${ms}</div>`;
+    }).join('');
+}
+
+$('go').addEventListener('click', async () => {
+  const q = $('q').value.trim();
+  if (!q || !extractor) return;
+  $('go').disabled = true; $('status').textContent = 'Embedding & searching…';
+  const exclude = new Set($('excl').value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
+  const qvec = await embed(q);
+  render(search(qvec, exclude));
+  $('status').textContent = ''; $('go').disabled = false;
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+# derived intermediates (regenerable via pipeline/)
+*.parquet
+*.npy
+__pycache__/
+.env
+.DS_Store
