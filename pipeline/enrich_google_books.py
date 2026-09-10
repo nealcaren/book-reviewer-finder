@@ -48,22 +48,56 @@ class QuotaExceeded(Exception):
     pass
 
 
+# Google returns 403/429 for two very different conditions. Only the DAILY limit
+# means "done until tomorrow"; the per-user / short-window rate limit is
+# transient and should be waited out, not treated as a hard stop. Both mention
+# "quota" in the message text, so we key off the structured error reason.
+_DAILY_QUOTA_REASONS = {"dailylimitexceeded", "quotaexceeded"}
+_RATE_LIMIT_REASONS = {"userratelimitexceeded", "ratelimitexceeded"}
+
+
+def _err_reason(r: httpx.Response) -> str:
+    """Best-effort extraction of Google's structured error reason (lowercased)."""
+    try:
+        err = r.json().get("error", {}) or {}
+    except Exception:
+        return ""
+    errs = err.get("errors") or []
+    if isinstance(errs, list) and errs:
+        return (errs[0].get("reason") or "").lower()
+    return (err.get("status") or "").lower()
+
+
 def _words(s: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]+", (s or "").lower()) if len(w) > 3}
 
 
 def query(title: str, author: str | None) -> dict:
-    """Return {gb_title, gb_description, gb_categories} for the best volume match,
-    or empties. Raises QuotaExceeded on a 429/quota 403 so the caller can stop."""
+    """Return the best volume match's metadata, or empties. Raises QuotaExceeded
+    only on the DAILY-limit response so the caller can stop for the day; transient
+    per-user rate limits are backed off and retried within this call."""
     q = f'intitle:{title[:120]}'
     if isinstance(author, str) and author.strip():
         q += f' inauthor:{author.split(",")[0].split(" and ")[0].strip()}'
     params = {"q": q, "maxResults": 1, "country": "US", "key": KEY}
-    for attempt in range(3):
+    for attempt in range(5):
         try:
             r = httpx.get(API, params=params, timeout=30)
-            if r.status_code in (429,) or (r.status_code == 403 and "quota" in r.text.lower()):
-                raise QuotaExceeded()
+            if r.status_code in (429, 403):
+                reason = _err_reason(r)
+                # True daily-quota exhaustion -> stop the whole run (resume tomorrow).
+                if reason in _DAILY_QUOTA_REASONS:
+                    raise QuotaExceeded()
+                # Ambiguous 403 that only says "quota" with no rate-limit reason:
+                # treat as daily to be safe.
+                if (r.status_code == 403 and reason not in _RATE_LIMIT_REASONS
+                        and "quota" in r.text.lower()):
+                    raise QuotaExceeded()
+                # Otherwise a transient rate limit: exponential backoff, then retry.
+                if attempt == 4:
+                    return {}
+                time.sleep(2 ** attempt)  # 1, 2, 4, 8 s
+                continue
             if r.status_code != 200:
                 return {}
             it = (r.json().get("items") or [{}])[0].get("volumeInfo", {})
@@ -78,7 +112,7 @@ def query(title: str, author: str | None) -> dict:
                     "gb_publisher": it.get("publisher") or None,
                     "gb_published": it.get("publishedDate") or None}
         except httpx.HTTPError:
-            if attempt == 2:
+            if attempt == 4:
                 return {}
             time.sleep(1.0 * (attempt + 1))
     return {}
@@ -129,7 +163,9 @@ def main() -> int:
             print(f"  {n_new} new looked up "
                   f"({sum(1 for r in rows if r.get('gb_description'))} w/ description)",
                   file=sys.stderr)
-        time.sleep(0.15)
+        # Books API allows ~100 requests / 100 s per user; ~1 req/s keeps us
+        # under that so we don't trip transient rate limits (see query()).
+        time.sleep(1.0)
 
     out = pd.DataFrame(rows)
     out.to_parquet(OUT, index=False)

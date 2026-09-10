@@ -34,8 +34,15 @@ jobs:
             echo "OPENALEX_API_KEY=${{ secrets.OPENALEX_API_KEY }}"
           } > .env
 
-      - name: Collect reviews (OpenAlex)
-        run: uv run pipeline/collect_reviews.py --since 2020-01-01
+      - name: Collect reviews (OpenAlex; incremental daily, full rebuild Sundays)
+        run: |
+          # Daily runs only fetch a recent window and upsert (fast, no churn).
+          # Once a week do a full rebuild to heal OpenAlex merges/reclassifications.
+          if [ "$(date -u +%u)" = "7" ]; then
+            uv run pipeline/collect_reviews.py --full
+          else
+            uv run pipeline/collect_reviews.py
+          fi
 
       - name: Enrich descriptions (Google Books; quota-capped, resumable)
         run: uv run pipeline/enrich_google_books.py --max 900

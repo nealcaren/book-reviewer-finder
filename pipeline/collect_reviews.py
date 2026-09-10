@@ -24,8 +24,9 @@ reviewed book, parsed out of OpenAlex's citation-style title
 
 Output: book_reviewer_finder/reviews.parquet — one row per (review, reviewer).
 
-    uv run book_reviewer_finder/collect_reviews.py                 # 2020-01-01+
-    uv run book_reviewer_finder/collect_reviews.py --since 2019-01-01
+    uv run book_reviewer_finder/collect_reviews.py                 # incremental (last 60 days), upsert
+    uv run book_reviewer_finder/collect_reviews.py --full          # full rebuild from 2020-01-01 (overwrite)
+    uv run book_reviewer_finder/collect_reviews.py --since 2019-01-01   # explicit window, still upsert
 """
 from __future__ import annotations
 
@@ -34,6 +35,7 @@ import os
 import re
 import sys
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 import httpx
@@ -235,16 +237,50 @@ def collect(since: str) -> pd.DataFrame:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--since", default="2020-01-01",
-                    help="Earliest publication date (YYYY-MM-DD). Default 2020-01-01.")
+    ap.add_argument("--since", default=None,
+                    help="Earliest publication date (YYYY-MM-DD). Default: a "
+                         "rolling --window-days look-back (or 2020-01-01 with --full).")
+    ap.add_argument("--full", action="store_true",
+                    help="Rebuild the whole corpus from scratch and OVERWRITE "
+                         "reviews.parquet. This heals OpenAlex merges/reclassifications "
+                         "(runs where a work was retyped or merged upstream). Slower; "
+                         "run periodically (the daily Action does it weekly).")
+    ap.add_argument("--window-days", type=int, default=60,
+                    help="Incremental look-back window in days (default 60; ignored "
+                         "with --full or an explicit --since).")
     args = ap.parse_args()
 
-    df = collect(args.since)
     ROOT.mkdir(exist_ok=True)
+
+    if args.full:
+        # Full rebuild: re-scan the whole corpus and overwrite.
+        since = args.since or "2020-01-01"
+        print(f"FULL rebuild since {since} (overwrites reviews.parquet)", file=sys.stderr)
+        df = collect(since)
+    else:
+        # Incremental: fetch only a recent window and UPSERT into the cache by
+        # work_id. We run daily, so a short window catches newly-indexed reviews
+        # without re-scraping years of history every time.
+        since = args.since or (date.today() - timedelta(days=args.window_days)).isoformat()
+        print(f"INCREMENTAL fetch since {since} (upsert into reviews.parquet)",
+              file=sys.stderr)
+        new = collect(since)
+        if OUT.exists() and not new.empty:
+            old = pd.read_parquet(OUT)
+            fresh_ids = set(new["work_id"])
+            # Drop the cached rows for works we just refetched, then append the
+            # new versions — so re-fetched works are updated, others preserved.
+            old = old[~old["work_id"].isin(fresh_ids)]
+            df = pd.concat([old, new], ignore_index=True)
+        elif OUT.exists():
+            df = pd.read_parquet(OUT)  # nothing new in the window; keep the cache
+        else:
+            df = new
+
     df.to_parquet(OUT, index=False)
     n_books = df["work_id"].nunique()
     n_rev = df["reviewer_oaid"].nunique()
-    print(f"\nCollected {len(df)} (review, reviewer) rows: "
+    print(f"\nCorpus now {len(df)} (review, reviewer) rows: "
           f"{n_books} reviews, {n_rev} distinct reviewers -> {OUT}")
     print(f"book_author parsed on {df['book_author'].notna().mean()*100:.0f}% of rows")
     return 0

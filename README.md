@@ -47,8 +47,13 @@ Run in order from the repo root:
 
 ```sh
 # 1. DOWNLOAD reviews from OpenAlex  ->  reviews.parquet
-#    (which journals: pipeline/soc_venues.py; --since sets the date floor)
-uv run pipeline/collect_reviews.py --since 2020-01-01
+#    (which journals: pipeline/soc_venues.py)
+#    Default is INCREMENTAL: fetch the last ~60 days and upsert into the cache
+#    by work_id — fast, and it doesn't churn counts by re-scraping all history.
+uv run pipeline/collect_reviews.py
+#    Periodically do a FULL rebuild (overwrites) to reconcile OpenAlex merges /
+#    reclassifications. The daily Action runs this automatically on Sundays.
+uv run pipeline/collect_reviews.py --full
 
 # 2. DOWNLOAD book descriptions from Google Books  ->  google_books.parquet
 #    Needs GOOGLE_BOOKS_API_KEY in a .env file (Google Cloud -> Books API).
@@ -65,11 +70,14 @@ git add data.js && git commit -m "refresh data" && git push
 
 GitHub Pages rebuilds automatically after the push (~1–2 min).
 
-- **Add a journal?** Add its ISSN to `pipeline/soc_venues.py`, then rerun from
-  step 1. (Mobilization, Social Movement Studies, Gender & Society, AJS, Social
-  Forces, Contemporary Sociology, etc. are already included.)
-- **Adding new books only** is cheap — steps 1–3 are incremental/cached; only
-  Google Books is quota-limited.
+- **Add a journal?** Add its ISSN to `pipeline/soc_venues.py`, then run step 1
+  with `--full` once so the new venue's back-catalog is pulled in (the rolling
+  incremental window only reaches ~60 days back). (Mobilization, Social Movement
+  Studies, Gender & Society, AJS, Social Forces, Contemporary Sociology, etc. are
+  already included.)
+- **Adding new books only** is cheap — step 1 is incremental (recent window +
+  upsert), step 2's Google Books cache is resumable; only Google Books is
+  quota-limited.
 
 ### Two search modes
 Each book carries **two** `all-MiniLM-L6-v2` vectors so search stays
