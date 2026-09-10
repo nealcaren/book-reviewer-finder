@@ -29,6 +29,9 @@
            vertical-align:middle; white-space:nowrap; }
   .badges { margin:.35rem 0 .1rem .1rem; display:flex; flex-wrap:wrap; gap:.3rem; }
   .yr { color:#bbb; font-size:.75rem; margin-left:.3rem; }
+  .more { width:100%; margin-top:1rem; background:#fff; color:var(--accent);
+          border:1px solid var(--accent); font-weight:600; }
+  .more:hover { background:#f2f7fc; }
   .bar { display:inline-block; height:.5rem; background:var(--accent); border-radius:3px;
          vertical-align:middle; margin-right:.4rem; }
   a { color:var(--accent); }
@@ -111,7 +114,6 @@ function search(qvec, exclude) {
   }
   return [...cand.values()]
     .sort((a, b) => b.score - a.score || b.best - a.best)
-    .slice(0, 25)
     .map(c => (c.matches.sort((x, y) => y.sim - x.sim), c));
 }
 
@@ -136,20 +138,39 @@ function badge(j, title) {
     `${JABBR[j] || j}</span>`;
 }
 
-function render(cands) {
-  if (!cands.length) { $('results').innerHTML = '<p>No candidates.</p>'; return; }
+function cardHTML(c) {
+  const oa = c.oaid ? ` · <a href="https://openalex.org/${c.oaid}" target="_blank">OpenAlex</a>` : '';
+  // Journal is shown on each cited book below (the summary row was redundant).
+  const ms = c.matches.slice(0, 5).map(m =>
+    `<div class="m"><span class="bar" style="width:${Math.round(m.sim*70)}px"></span>` +
+    `${m.sim.toFixed(2)}&nbsp; ${m.t} ${badge(m.j)}<span class="yr">${m.y||''}</span></div>`).join('');
+  return `<div class="cand"><span class="sc">${c.score.toFixed(2)}</span>` +
+         `<h3>${c.name}</h3><div class="inst">${c.inst||'—'}${oa} · ` +
+         `${c.matches.length} similar book(s) reviewed</div>${ms}</div>`;
+}
+
+const PAGE = 25;
+let ALL = [], shown = 0;
+
+function renderMore() {
+  shown = Math.min(shown + PAGE, ALL.length);
+  const cards = ALL.slice(0, shown).map(cardHTML).join('');
+  const rest = ALL.length - shown;
+  const btn = rest > 0
+    ? `<button id="more" class="more">Show ${Math.min(PAGE, rest)} more (${rest} remaining)</button>`
+    : '';
   $('results').innerHTML =
-    `<h2 style="font-size:1.1rem;margin-top:2rem">Top ${cands.length} candidate reviewers</h2>` +
-    cands.map(c => {
-      const oa = c.oaid ? ` · <a href="https://openalex.org/${c.oaid}" target="_blank">OpenAlex</a>` : '';
-      // Journal is shown on each cited book below (the summary row was redundant).
-      const ms = c.matches.slice(0, 5).map(m =>
-        `<div class="m"><span class="bar" style="width:${Math.round(m.sim*70)}px"></span>` +
-        `${m.sim.toFixed(2)}&nbsp; ${m.t} ${badge(m.j)}<span class="yr">${m.y||''}</span></div>`).join('');
-      return `<div class="cand"><span class="sc">${c.score.toFixed(2)}</span>` +
-             `<h3>${c.name}</h3><div class="inst">${c.inst||'—'}${oa} · ` +
-             `${c.matches.length} similar book(s) reviewed</div>${ms}</div>`;
-    }).join('');
+    `<h2 style="font-size:1.1rem;margin-top:2rem">Candidate reviewers ` +
+    `<span style="color:#999;font-weight:400">(showing ${shown} of ${ALL.length})</span></h2>` +
+    cards + btn;
+  const mb = $('more');
+  if (mb) mb.addEventListener('click', renderMore);
+}
+
+function showResults(cands) {
+  ALL = cands; shown = 0;
+  if (!ALL.length) { $('results').innerHTML = '<p>No candidates.</p>'; return; }
+  renderMore();
 }
 
 $('go').addEventListener('click', async () => {
@@ -158,7 +179,7 @@ $('go').addEventListener('click', async () => {
   $('go').disabled = true; $('status').textContent = 'Embedding & searching…';
   const exclude = new Set($('excl').value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
   const qvec = await embed(q);
-  render(search(qvec, exclude));
+  showResults(search(qvec, exclude));
   $('status').textContent = ''; $('go').disabled = false;
 });
 </script>
