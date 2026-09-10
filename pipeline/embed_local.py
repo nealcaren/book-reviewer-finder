@@ -36,13 +36,40 @@ WEB = ROOT  # data.js at repo root (served by Pages)
 MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
-def emb_text(r) -> str:
+def _join(r, fields) -> str:
     parts = [str(r["book_title"])]
-    for fld in ("gb_categories", "gb_description", "review_abstract"):
+    for fld in fields:
         v = r.get(fld)
         if isinstance(v, str) and v.strip():
             parts.append(v)
-    return ". ".join(parts)[:2000]
+    return ". ".join(parts)
+
+
+def _title_text(r) -> str:
+    """Short, uniform representation — title + OpenAlex keywords/topics, which
+    every book has, so all title-mode docs stay comparable length."""
+    return _join(r, ("review_keywords", "review_topics"))
+
+
+def _full_text(r) -> str | None:
+    """Rich representation (title + keywords + categories + description +
+    abstract). None when the book has no description/abstract beyond keywords, so
+    full-text search is restricted to books we actually have prose for — keeping
+    ALL docs in that mode comparable length (no title-vs-abstract length bias)."""
+    extra = [r.get(f) for f in ("gb_description", "review_abstract")]
+    if not any(isinstance(v, str) and v.strip() for v in extra):
+        return None
+    return _join(r, ("review_keywords", "review_topics", "gb_categories",
+                     "gb_description", "review_abstract"))[:2000]
+
+
+def _quantize(vecs: np.ndarray):
+    """Unit-normalize + int8-quantize with a single global scale. Returns
+    (int8 matrix, scale)."""
+    vecs = vecs / (np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9)
+    scale = float(np.abs(vecs).max()) / 127.0
+    q = np.clip(np.round(vecs / scale), -127, 127).astype(np.int8)
+    return q, scale
 
 
 def main() -> int:
@@ -81,40 +108,47 @@ def main() -> int:
                               oaid if isinstance(oaid, str) else ""])
         books.append({"wid": wid, "row": first, "reviewers": reviewers})
 
-    texts = [emb_text(b["row"]) for b in books]
-    print(f"embedding {len(texts)} books with {MODEL} ...")
     model = TextEmbedding(model_name=MODEL)
-    vecs = np.array(list(model.embed(texts)), dtype=np.float32)
-    vecs /= (np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9)
 
-    # int8 quantize with a SINGLE global scale: since the scale is constant
-    # across all books, cosine ranking is unchanged (it drops out of argsort);
-    # the browser multiplies the raw dot product by EMB_SCALE only to recover
-    # the ~0-1 similarity for display. Vectors are packed as base64 int8 (384
-    # bytes/book) instead of decimal-float JSON — ~7x smaller.
-    maxabs = float(np.abs(vecs).max())
-    scale = maxabs / 127.0
-    q = np.clip(np.round(vecs / scale), -127, 127).astype(np.int8)
+    # TWO embeddings per the two search modes. Within each mode every document is
+    # comparable length, so there's no title-vs-abstract length bias (see the
+    # bias analysis): TITLE = title only, all books; FULL = title + description +
+    # abstract, ONLY for books that have such text.
+    #   Vectors are int8-quantized with one global scale each (constant scale
+    #   drops out of ranking; the browser multiplies by it only to show a ~0-1
+    #   similarity) and base64-packed.
+    title_texts = [_title_text(b["row"]) for b in books]
+    print(f"embedding {len(title_texts)} TITLE texts with {MODEL} ...")
+    qt, scale_t = _quantize(np.array(list(model.embed(title_texts)), dtype=np.float32))
+
+    full_idx = [i for i, b in enumerate(books) if _full_text(b["row"]) is not None]
+    full_texts = [_full_text(books[i]["row"]) for i in full_idx]
+    print(f"embedding {len(full_texts)} FULL-TEXT books (have description/abstract) ...")
+    qf, scale_f = _quantize(np.array(list(model.embed(full_texts)), dtype=np.float32))
+    ef_by_i = {full_idx[k]: qf[k] for k in range(len(full_idx))}
 
     out = []
-    for b, qi in zip(books, q):
+    for i, b in enumerate(books):
         r = b["row"]
+        ef = ef_by_i.get(i)
         out.append({
             "t": str(r["book_title"]),
             "y": int(r["year"]) if pd.notna(r["year"]) else None,
             "j": str(r["journal"]),
             "r": b["reviewers"],
-            "e": base64.b64encode(qi.tobytes()).decode("ascii"),
+            "et": base64.b64encode(qt[i].tobytes()).decode("ascii"),
+            "ef": base64.b64encode(ef.tobytes()).decode("ascii") if ef is not None else None,
         })
 
     WEB.mkdir(exist_ok=True)
     (WEB / "data.js").write_text(
-        f"const EMB_SCALE = {scale:.8g};\n"
+        f"const EMB_SCALE_TITLE = {scale_t:.8g};\n"
+        f"const EMB_SCALE_FULL = {scale_f:.8g};\n"
         "const BOOKS = " + json.dumps(out, ensure_ascii=False) + ";\n")
     n_rev = len({rv[0] for b in out for rv in b["r"]})
     size_mb = (WEB / "data.js").stat().st_size / 1e6
-    print(f"wrote {len(out)} books, {n_rev} reviewers -> web/data.js "
-          f"({size_mb:.1f} MB, int8-quantized dim={vecs.shape[1]})")
+    print(f"wrote {len(out)} books ({len(full_idx)} with full-text), {n_rev} reviewers "
+          f"-> web/data.js ({size_mb:.1f} MB)")
     return 0
 
 

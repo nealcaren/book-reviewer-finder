@@ -32,6 +32,9 @@
   .more { width:100%; margin-top:1rem; background:#fff; color:var(--accent);
           border:1px solid var(--accent); font-weight:600; }
   .more:hover { background:#f2f7fc; }
+  .modes label { display:block; font-weight:400; color:#1a1a1a; margin:.15rem 0; }
+  .modes input { width:auto; margin-right:.35rem; }
+  .hint { color:#999; font-size:.82rem; }
   .bar { display:inline-block; height:.5rem; background:var(--accent); border-radius:3px;
          vertical-align:middle; margin-right:.4rem; }
   a { color:var(--accent); }
@@ -45,6 +48,15 @@
 <textarea id="q" rows="3" placeholder="e.g. The Sum of Us: How Racism Costs Everyone and How We Can Prosper Together"></textarea>
 <label>Exclude names (COI — the book's author / known conflicts, comma-separated)</label>
 <input id="excl" placeholder="Jane Smith, John Doe">
+
+<label>Match on</label>
+<div class="modes">
+  <label><input type="radio" name="mode" value="title" checked> Title + keywords
+    <span class="hint">— all books; best with a short title-length query</span></label>
+  <label><input type="radio" name="mode" value="full"> Full text
+    <span class="hint">— only books with a description/abstract; best with a longer query</span></label>
+</div>
+
 <button id="go" disabled>Loading model…</button>
 
 <div id="status"></div>
@@ -64,18 +76,23 @@ env.allowLocalModels = false;   // pull the model from the HF hub CDN
 
 const $ = id => document.getElementById(id);
 
-// Book vectors are base64-packed int8 (see embed_local.py). Decode once at load
-// into Int8Arrays; similarity is dot(query, int8) * EMB_SCALE (the global scale
-// only rescales for display — it doesn't affect ranking).
-const VECS = BOOKS.map(b => {
-  const bin = atob(b.e), u = new Uint8Array(bin.length);
+// Book vectors are base64-packed int8 (see embed_local.py). Two sets per the
+// two search modes: TITLE (et, all books) and FULL-TEXT (ef, only books that
+// have a description/abstract). Decode once at load into Int8Arrays; similarity
+// is dot(query, int8) * scale (the scale only rescales for display).
+function decodeVec(s) {
+  const bin = atob(s), u = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
   return new Int8Array(u.buffer);
-});
+}
+const VECS_T = BOOKS.map(b => decodeVec(b.et));
+const VECS_F = BOOKS.map(b => b.ef ? decodeVec(b.ef) : null);
+const nFull = VECS_F.filter(Boolean).length;
 
 const nRev = new Set(BOOKS.flatMap(b => b.r.map(r => r[0]))).size;
 $('corpusline').textContent =
-  `${BOOKS.length} reviewed books · ${nRev} reviewers · sociology journals · public data · runs entirely in your browser`;
+  `${BOOKS.length} books · ${nFull} with descriptions · ${nRev} reviewers · ` +
+  `sociology journals · public data · runs entirely in your browser`;
 
 let extractor = null;
 (async () => {
@@ -91,14 +108,22 @@ async function embed(text) {
   return out.data;                       // Float32Array, length 384, normalized
 }
 
-function search(qvec, exclude) {
-  // dot(unit query, int8 book) * EMB_SCALE ≈ cosine similarity
-  const sims = VECS.map(e => {
+function search(qvec, exclude, mode) {
+  // mode 'full' ranks only books with a description/abstract (VECS_F); 'title'
+  // ranks all books on their title vector (VECS_T). Within each mode all docs
+  // are comparable length, so there's no title-vs-abstract length bias.
+  const full = mode === 'full';
+  const V = full ? VECS_F : VECS_T;
+  const scale = full ? EMB_SCALE_FULL : EMB_SCALE_TITLE;
+  const scored = [];
+  for (let i = 0; i < BOOKS.length; i++) {
+    const e = V[i];
+    if (!e) continue;                       // skip books missing a full-text vec
     let s = 0;
-    for (let i = 0; i < e.length; i++) s += e[i] * qvec[i];
-    return s * EMB_SCALE;
-  });
-  const idx = sims.map((s, i) => [s, i]).sort((a, b) => b[0] - a[0]).slice(0, 60);
+    for (let k = 0; k < e.length; k++) s += e[k] * qvec[k];
+    scored.push([s * scale, i]);
+  }
+  const idx = scored.sort((a, b) => b[0] - a[0]).slice(0, 60);
   const cand = new Map();
   for (const [sim, i] of idx) {
     const b = BOOKS[i];
@@ -178,8 +203,9 @@ $('go').addEventListener('click', async () => {
   if (!q || !extractor) return;
   $('go').disabled = true; $('status').textContent = 'Embedding & searching…';
   const exclude = new Set($('excl').value.split(',').map(s => s.trim().toLowerCase()).filter(Boolean));
+  const mode = document.querySelector('input[name=mode]:checked').value;
   const qvec = await embed(q);
-  showResults(search(qvec, exclude));
+  showResults(search(qvec, exclude, mode));
   $('status').textContent = ''; $('go').disabled = false;
 });
 </script>

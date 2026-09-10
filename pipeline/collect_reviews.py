@@ -75,7 +75,7 @@ def _get(params: dict) -> dict:
 def _paginate(filt: str) -> list[dict]:
     """Cursor-paginate all works matching `filt`."""
     out, cursor = [], "*"
-    fields = ("id,title,publication_year,type,authorships,"
+    fields = ("id,title,publication_year,type,authorships,topics,keywords,"
               "abstract_inverted_index,primary_location,referenced_works_count")
     while cursor:
         data = _get({"filter": filt, "per-page": 200, "cursor": cursor,
@@ -98,6 +98,12 @@ _REVIEW_OF = re.compile(r'^\s*(?:book\s+)?review of\s+(?P<t>.+?)\s*$', re.I | re
 
 def is_review_of_title(title: str | None) -> bool:
     return bool(title and _REVIEW_OF.match(title))
+
+
+def _names(items: list | None, k: int) -> str | None:
+    """Join the display_names of the first k OpenAlex topic/keyword objects."""
+    vals = [x.get("display_name", "") for x in (items or [])[:k] if x.get("display_name")]
+    return "; ".join(vals) or None
 
 
 def _reconstruct_abstract(inv: dict | None) -> str | None:
@@ -185,6 +191,11 @@ def collect(since: str) -> pd.DataFrame:
                 "reviewer_oaid": (au.get("id") or "").split("/")[-1] or None,
                 "reviewer_institution": insts[0]["display_name"] if insts else None,
                 **book,
+                # OpenAlex classifies every work — topics + keywords describe the
+                # book's subject and are available for ALL reviews (used for the
+                # title+keywords search mode, which stays short/uniform).
+                "review_topics": _names(w.get("topics"), 3),
+                "review_keywords": _names(w.get("keywords"), 6),
                 "review_abstract": _reconstruct_abstract(w.get("abstract_inverted_index")),
                 "raw_title": w.get("title"),
             })
