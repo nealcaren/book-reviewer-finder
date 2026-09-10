@@ -142,18 +142,13 @@ function render(cands) {
     `<h2 style="font-size:1.1rem;margin-top:2rem">Top ${cands.length} candidate reviewers</h2>` +
     cands.map(c => {
       const oa = c.oaid ? ` · <a href="https://openalex.org/${c.oaid}" target="_blank">OpenAlex</a>` : '';
-      // distinct journals this reviewer reviewed for (among matches), most-reviewed first
-      const jc = {};
-      for (const m of c.matches) jc[m.j] = (jc[m.j] || 0) + 1;
-      const journals = Object.keys(jc).sort((a, b) => jc[b] - jc[a]);
-      const badges = `<div class="badges">` +
-        journals.map(j => badge(j, `${j} — ${jc[j]} review(s)`)).join('') + `</div>`;
+      // Journal is shown on each cited book below (the summary row was redundant).
       const ms = c.matches.slice(0, 5).map(m =>
         `<div class="m"><span class="bar" style="width:${Math.round(m.sim*70)}px"></span>` +
         `${m.sim.toFixed(2)}&nbsp; ${m.t} ${badge(m.j)}<span class="yr">${m.y||''}</span></div>`).join('');
       return `<div class="cand"><span class="sc">${c.score.toFixed(2)}</span>` +
              `<h3>${c.name}</h3><div class="inst">${c.inst||'—'}${oa} · ` +
-             `${c.matches.length} similar book(s) reviewed</div>${badges}${ms}</div>`;
+             `${c.matches.length} similar book(s) reviewed</div>${ms}</div>`;
     }).join('');
 }
 
