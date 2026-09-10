@@ -71,9 +71,6 @@
 
 <script src="data.js"></script>
 <script type="module">
-import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2';
-env.allowLocalModels = false;   // pull the model from the HF hub CDN
-
 const $ = id => document.getElementById(id);
 
 // Book vectors are base64-packed int8 (see embed_local.py). Two sets per the
@@ -94,13 +91,29 @@ $('corpusline').textContent =
   `${BOOKS.length} books · ${nFull} with descriptions · ${nRev} reviewers · ` +
   `sociology journals · public data · runs entirely in your browser`;
 
+// Load the model lazily via dynamic import (so a corpus that's already decoded
+// still renders even if the model host is slow) and force SINGLE-THREADED wasm:
+// GitHub Pages doesn't send the cross-origin-isolation headers that
+// SharedArrayBuffer / threaded wasm need, which hangs Safari on the default
+// threaded build. Errors surface in the status line instead of hanging.
 let extractor = null;
 (async () => {
-  $('status').textContent = 'Downloading the embedding model (first load only, ~25 MB)…';
-  extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
-  $('status').textContent = '';
-  $('go').disabled = false;
-  $('go').textContent = 'Find reviewers';
+  try {
+    $('status').textContent = 'Downloading the embedding model (first load only, ~25 MB)…';
+    const { pipeline, env } = await import(
+      'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2');
+    env.allowLocalModels = false;             // fetch the model from the HF hub
+    env.backends.onnx.wasm.numThreads = 1;    // no cross-origin isolation on Pages
+    extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+    $('status').textContent = '';
+    $('go').disabled = false;
+    $('go').textContent = 'Find reviewers';
+  } catch (e) {
+    console.error(e);
+    $('status').innerHTML = '⚠️ Could not load the embedding model: ' +
+      (e && e.message ? e.message : e) + '<br>Try reloading, or a different browser.';
+    $('go').textContent = 'Model failed to load';
+  }
 })();
 
 async function embed(text) {
