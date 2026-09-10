@@ -36,7 +36,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent  # repo root
 OUT = ROOT / "google_books.parquet"
 API = "https://www.googleapis.com/books/v1/volumes"
 KEY = os.environ.get("GOOGLE_BOOKS_API_KEY", "")

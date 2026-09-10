@@ -45,7 +45,7 @@ from soc_venues import SOC_VENUES  # noqa: E402 (vendored alongside this script)
 
 load_dotenv()
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent  # repo root
 OUT = ROOT / "reviews.parquet"
 OPENALEX = "https://api.openalex.org/works"
 CONTEMP_SOC = "0094-3061"  # pure book-review journal — take all works

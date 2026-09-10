@@ -23,6 +23,7 @@ Embedding text = title + Google Books categories + description + review abstract
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 from pathlib import Path
 
@@ -30,8 +31,8 @@ import numpy as np
 import pandas as pd
 from fastembed import TextEmbedding
 
-ROOT = Path(__file__).resolve().parent
-WEB = ROOT / "web"
+ROOT = Path(__file__).resolve().parent.parent  # repo root
+WEB = ROOT  # data.js at repo root (served by Pages)
 MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 
@@ -86,24 +87,34 @@ def main() -> int:
     vecs = np.array(list(model.embed(texts)), dtype=np.float32)
     vecs /= (np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9)
 
+    # int8 quantize with a SINGLE global scale: since the scale is constant
+    # across all books, cosine ranking is unchanged (it drops out of argsort);
+    # the browser multiplies the raw dot product by EMB_SCALE only to recover
+    # the ~0-1 similarity for display. Vectors are packed as base64 int8 (384
+    # bytes/book) instead of decimal-float JSON — ~7x smaller.
+    maxabs = float(np.abs(vecs).max())
+    scale = maxabs / 127.0
+    q = np.clip(np.round(vecs / scale), -127, 127).astype(np.int8)
+
     out = []
-    for b, v in zip(books, vecs):
+    for b, qi in zip(books, q):
         r = b["row"]
         out.append({
             "t": str(r["book_title"]),
             "y": int(r["year"]) if pd.notna(r["year"]) else None,
             "j": str(r["journal"]),
             "r": b["reviewers"],
-            "e": [round(float(x), 4) for x in v],
+            "e": base64.b64encode(qi.tobytes()).decode("ascii"),
         })
 
     WEB.mkdir(exist_ok=True)
     (WEB / "data.js").write_text(
+        f"const EMB_SCALE = {scale:.8g};\n"
         "const BOOKS = " + json.dumps(out, ensure_ascii=False) + ";\n")
     n_rev = len({rv[0] for b in out for rv in b["r"]})
     size_mb = (WEB / "data.js").stat().st_size / 1e6
     print(f"wrote {len(out)} books, {n_rev} reviewers -> web/data.js "
-          f"({size_mb:.1f} MB, dim={vecs.shape[1]})")
+          f"({size_mb:.1f} MB, int8-quantized dim={vecs.shape[1]})")
     return 0
 
 

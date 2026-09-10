@@ -60,6 +60,16 @@ import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transfo
 env.allowLocalModels = false;   // pull the model from the HF hub CDN
 
 const $ = id => document.getElementById(id);
+
+// Book vectors are base64-packed int8 (see embed_local.py). Decode once at load
+// into Int8Arrays; similarity is dot(query, int8) * EMB_SCALE (the global scale
+// only rescales for display — it doesn't affect ranking).
+const VECS = BOOKS.map(b => {
+  const bin = atob(b.e), u = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+  return new Int8Array(u.buffer);
+});
+
 const nRev = new Set(BOOKS.flatMap(b => b.r.map(r => r[0]))).size;
 $('corpusline').textContent =
   `${BOOKS.length} reviewed books · ${nRev} reviewers · sociology journals · public data · runs entirely in your browser`;
@@ -79,11 +89,11 @@ async function embed(text) {
 }
 
 function search(qvec, exclude) {
-  // cosine == dot (all vectors normalized)
-  const sims = BOOKS.map(b => {
-    let s = 0; const e = b.e;
+  // dot(unit query, int8 book) * EMB_SCALE ≈ cosine similarity
+  const sims = VECS.map(e => {
+    let s = 0;
     for (let i = 0; i < e.length; i++) s += e[i] * qvec[i];
-    return s;
+    return s * EMB_SCALE;
   });
   const idx = sims.map((s, i) => [s, i]).sort((a, b) => b[0] - a[0]).slice(0, 60);
   const cand = new Map();
